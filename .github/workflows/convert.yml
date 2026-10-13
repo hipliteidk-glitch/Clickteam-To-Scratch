@@ -3,14 +3,45 @@ on: workflow_dispatch
 jobs:
   convert:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: python3 cts2_cli.py fnaf4.exe -o fnaf4.sb3 --no-audio --fast-frames --progress off
+      - name: add swap 16GB
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /swapfile /mnt/swapfile || true
+          sudo fallocate -l 16G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+      - name: download fnaf4.exe from release
+        run: |
+          gh release download fnaf4-exe -p "fnaf4.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch || gh release download -p "*.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch || (echo "No release found, checking repo root" && ls -lh)
+          ls -lh /tmp/fnaf4.exe || ls -lh fnaf4.exe || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: convert (low-mem fast frames)
+        env:
+          CTS2_FAST_FRAMES: "1"
+          CTS2_SKIP_AUDIO: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          EXE_PATH="/tmp/fnaf4.exe"
+          if [ ! -f "$EXE_PATH" ]; then EXE_PATH="./fnaf4.exe"; fi
+          python3 -u cts2_cli.py "$EXE_PATH" -o fnaf4.sb3 --no-audio --fast-frames --progress off 2>&1 | tee log.txt
+          ls -lh fnaf4.sb3
       - uses: actions/upload-artifact@v4
         with:
           name: fnaf4-sb3
           path: fnaf4.sb3
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: convert-logs
+          path: log.txt
