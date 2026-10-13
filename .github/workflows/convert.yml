@@ -33,7 +33,7 @@ jobs:
         run: |
           EXE_PATH="/tmp/fnaf4.exe"
           if [ ! -f "$EXE_PATH" ]; then EXE_PATH="./fnaf4.exe"; fi
-          python3 -u cts2_cli.py "$EXE_PATH" -o fnaf4.sb3 --no-audio --fast-frames --progress off 2>&1 | tee log.txt
+          python3 -u cts2_cli.py "$EXE_PATH" -o fnaf4.sb3 --no-audio --fast-frames 2>&1 | tee log.txt
           ls -lh fnaf4.sb3
       - uses: actions/upload-artifact@v4
         with:
