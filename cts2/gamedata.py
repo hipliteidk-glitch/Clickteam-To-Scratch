@@ -886,7 +886,9 @@ class _GameReader:
         self.info_notes: List[str] = []
         self.decryptor: Optional[_Decryptor] = None
         self.missing_object_notes: List[str] = []
-        self.progress = None  # cts2.progress.Reporter (optional)
+        self.progress = None
+        self.fast_frames = False
+        self.skip_audio = False
 
     def warning(self, msg: str) -> None:
         """Record a parser warning and stream it into the progress report."""
@@ -1523,6 +1525,8 @@ class _GameReader:
                         frame.layers.append(Layer(name, flags, xc, yc))
                 elif chunk.id == FRAME_EVENTS:
                     self.event_sizes.append(len(chunk.raw))
+                    if getattr(self, 'fast_frames', False):
+                        continue
                     # Decode the compiled EXE event program into the same
                     # EventGroup structures the MFA reader produces, so the
                     # Scratch transpiler can turn them into real blocks.
@@ -1604,8 +1608,7 @@ class _GameReader:
                 # everything else has been assembled.
                 frame_chunks.append(chunk)
                 continue
-            if (chunk.id == CHUNK_SOUND_BANK and
-                    not audio.EXTRACTION_ENABLED):
+            if (chunk.id == CHUNK_SOUND_BANK and (not audio.EXTRACTION_ENABLED or getattr(self, 'skip_audio', False))):
                 # Do not even decrypt/decompress the audio chunk.  Its raw
                 # bytes have no bearing on frames, images, or event blocks.
                 continue
@@ -1807,7 +1810,7 @@ def find_game_data_offset(data: bytes) -> Optional[int]:
     return _scan_for_game_data(data, 0)
 
 
-def load_game_data_from_exe(source, progress=None) -> Tuple[MFA, List[str]]:
+def load_game_data_from_exe(source, progress=None, fast_frames=False, skip_audio=False) -> Tuple[MFA, List[str]]:
     """Read an F2.5 EXE's PAME/PAMU game data and rebuild an MFA object.
 
     ``source`` may be a file path or the raw EXE bytes.  Returns
@@ -1839,6 +1842,8 @@ def load_game_data_from_exe(source, progress=None) -> Tuple[MFA, List[str]]:
         raise GameDataError(f"expected PAME/PAMU game header, found {magic!r}")
 
     reader = _GameReader()
+    reader.fast_frames = fast_frames
+    reader.skip_audio = skip_audio
     reader.unicode = magic == b"PAMU"
     _GLOBAL_UNICODE = reader.unicode
     reader.progress = progress

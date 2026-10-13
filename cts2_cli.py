@@ -161,6 +161,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pack-info", action="store_true",
                     help="for .exe input: print the pack manifest as JSON, then exit")
     ap.add_argument("--web", action="store_true", help="start the local upload web app")
+    ap.add_argument("--fast-frames", action="store_true", help="skip heavy event parsing per frame (low-mem for big exes like FNAF)")
+    ap.add_argument("--no-audio", action="store_true", help="skip sound bank decoding")
     ap.add_argument("--port", type=int, default=8000, help="web port (default 8000)")
     args = ap.parse_args(argv)
 
@@ -233,8 +235,10 @@ def main(argv=None) -> int:
 
     reporter = _make_reporter(args.progress, sys.stderr)
     try:
+        fast = args.fast_frames or __import__("os").getenv("CTS2_FAST_FRAMES")
+        no_audio = args.no_audio or __import__("os").getenv("CTS2_SKIP_AUDIO")
         result = convert_file(args.input, out, args.report, ctfak=args.ctfak,
-                              progress=reporter)
+                              progress=reporter, fast_frames=bool(fast), skip_audio=bool(no_audio))
     except Exception as exc:  # noqa: BLE001
         if isinstance(reporter.sink, _AnsiRenderer):
             reporter.sink.clear()

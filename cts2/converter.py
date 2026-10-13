@@ -92,7 +92,7 @@ def find_game_in_folder(folder: str) -> Optional[str]:
 # --------------------------------------------------------------------------
 
 def _exe_to_mfa_builtin(exe_path: str, data: bytes,
-                        notes: list, progress=None) -> Optional[MFA]:
+                        notes: list, progress=None, fast_frames=False, skip_audio=False) -> Optional[MFA]:
     """Fast path: recover the game using only the built-in readers.
 
     1. Raw MFA inside the EXE pack, or
@@ -114,7 +114,7 @@ def _exe_to_mfa_builtin(exe_path: str, data: bytes,
     progress.phase("gamedata", total=1)
     progress.step("locating PAME/PAMU game data")
     try:
-        mfa, gnotes = gamedata.load_game_data_from_exe(data, progress=progress)
+        mfa, gnotes = gamedata.load_game_data_from_exe(data, progress=progress, fast_frames=fast_frames, skip_audio=skip_audio)
     except gamedata.GameDataError as exc:
         notes.append(f"built-in game-data reader: {exc}")
         return None
@@ -157,9 +157,7 @@ def _via_ctfak(path_for_ctfak: str, ctfak_hint: Optional[str],
     return load_mfa(mfa_file)
 
 
-def load_from_bytes(data: bytes, input_name: str,
-                    ctfak: Optional[str] = None,
-                    progress=None) -> Tuple[MFA, List[str]]:
+def load_from_bytes(data: bytes, input_name: str, ctfak: Optional[str] = None, progress=None, fast_frames=False, skip_audio=False) -> Tuple[MFA, List[str]]:
     """Load any supported input from memory. Returns ``(mfa, notes)``."""
     from .progress import NULL as _NULL
     progress = progress or _NULL
@@ -172,7 +170,7 @@ def load_from_bytes(data: bytes, input_name: str,
     if kind == detect.KIND_EXE:
         progress.phase("pack", total=1)
         progress.step("scanning EXE for Fusion pack / game data")
-        mfa = _exe_to_mfa_builtin(input_name, data, notes, progress)
+        mfa = _exe_to_mfa_builtin(input_name, data, notes, progress, fast_frames=fast_frames, skip_audio=skip_audio)
         if mfa is not None:
             return mfa, notes
         notes.append("built-in readers could not convert this EXE")
@@ -186,7 +184,7 @@ def load_from_bytes(data: bytes, input_name: str,
     if kind == detect.KIND_GAMEDATA:
         progress.phase("gamedata", total=1)
         progress.step("reading raw Fusion 2.5 game data (PAME/PAMU)")
-        mfa, gnotes = gamedata.load_game_data_from_exe(data, progress=progress)
+        mfa, gnotes = gamedata.load_game_data_from_exe(data, progress=progress, fast_frames=fast_frames, skip_audio=skip_audio)
         notes.append(
             "read the raw Fusion 2.5 game data (PAME/PAMU) directly — "
             "no .mfa, no CTFAK"
@@ -195,7 +193,7 @@ def load_from_bytes(data: bytes, input_name: str,
         return mfa, notes
     # Unknown content. Try the built-in readers anyway (cheap, in case the
     # bytes are exotic), then the optional CTFAK fallback.
-    mfa = _exe_to_mfa_builtin(input_name, data, notes, progress)
+    mfa = _exe_to_mfa_builtin(input_name, data, notes, progress, fast_frames=fast_frames, skip_audio=skip_audio)
     if mfa is not None:
         return mfa, notes
     if not (ctfak or ctfak_mod.find_ctfak_binary()):
@@ -207,8 +205,7 @@ def load_from_bytes(data: bytes, input_name: str,
     return _via_ctfak(src, ctfak, notes), notes
 
 
-def load_project(path: str, ctfak: Optional[str] = None,
-                 progress=None) -> Tuple[MFA, List[str]]:
+def load_project(path: str, ctfak: Optional[str] = None, progress=None, fast_frames=False, skip_audio=False) -> Tuple[MFA, List[str]]:
     """Load any supported input: a game .exe, an .mfa, a data file — or a
     whole extracted game *folder*, whose game file is found automatically."""
     from .progress import NULL as _NULL
@@ -229,7 +226,7 @@ def load_project(path: str, ctfak: Optional[str] = None,
             try:
                 with open(cand, "rb") as fh:
                     data = fh.read()
-                mfa, notes = load_from_bytes(data, cand, ctfak, progress)
+                mfa, notes = load_from_bytes(data, cand, ctfak, progress, fast_frames=fast_frames, skip_audio=skip_audio)
             except Exception as exc:  # noqa: BLE001 - try the next candidate
                 failures.append(f"{os.path.basename(cand)}: {exc}")
                 continue
@@ -273,16 +270,16 @@ def _merge_progress_warnings(report: dict, progress) -> None:
 
 
 def convert_file(input_path: str, output_path: Optional[str] = None,
-                 report_path: Optional[str] = None,
-                 ctfak: Optional[str] = None,
-                 progress=None) -> dict:
+ report_path: Optional[str] = None,
+ ctfak: Optional[str] = None,
+ progress=None, fast_frames=False, skip_audio=False) -> dict:
     """Convert a game .exe / .mfa / data file / folder to an SB3 project.
 
     Returns {'project': bytes, 'mfa': MFA, 'report': dict}.
     """
     from .progress import NULL as _NULL
     progress = progress or _NULL
-    mfa, notes = load_project(input_path, ctfak=ctfak, progress=progress)
+    mfa, notes = load_project(input_path, ctfak=ctfak, progress=progress, fast_frames=fast_frames, skip_audio=skip_audio)
     sb3, report = build_project(mfa, progress)
     if notes:
         report.setdefault("notes", []).extend(notes)
