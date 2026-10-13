@@ -9,19 +9,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
       - run: pip install -r requirements.txt
-      - name: add swap 16GB
+      - name: add swap 32GB
         run: |
           sudo swapoff -a || true
           sudo rm -f /swapfile /mnt/swapfile || true
-          sudo fallocate -l 16G /mnt/swapfile
+          sudo fallocate -l 32G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
           free -h
+          df -h
       - name: download fnaf4.exe from release
         run: |
-          gh release download fnaf4-exe -p "fnaf4.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch || gh release download -p "*.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch || (echo "No release found, checking repo root" && ls -lh)
+          gh release download fnaf4-exe -p "fnaf4.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch || gh release download -p "*.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch || (echo "No release found" && ls -lh)
           ls -lh /tmp/fnaf4.exe || ls -lh fnaf4.exe || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,7 +44,7 @@ jobs:
         run: |
           EXE_PATH="/tmp/fnaf4.exe"
           if [ ! -f "$EXE_PATH" ]; then EXE_PATH="./fnaf4.exe"; fi
-          python3 -u cts2_cli.py "$EXE_PATH" -o fnaf4.sb3 --no-audio --fast-frames 2>&1 | tee log.txt
+          python3 -u cts2_cli.py "$EXE_PATH" -o fnaf4.sb3 --no-audio --fast-frames --progress off 2>&1 | tee log.txt
           ls -lh fnaf4.sb3
       - uses: actions/upload-artifact@v4
         with:
