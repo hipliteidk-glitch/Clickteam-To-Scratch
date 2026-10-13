@@ -10,10 +10,12 @@ jobs:
       - run: pip install -r requirements.txt
       - name: add swap
         run: |
-          sudo fallocate -l 16G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo swapoff -a || true
+          sudo rm -f /swapfile /mnt/swapfile || true
+          sudo fallocate -l 8G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=8192
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
           free -h
       - name: download exe
         run: |
@@ -23,7 +25,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: decompile
         run: |
-          python3 -u cts2_cli.py /tmp/fnaf4.exe -o fnaf4.sb3 2>&1 || python3 -u -m clickteam_to_scratch /tmp/fnaf4.exe fnaf4.sb3 2>&1
+          python3 -u cts2_cli.py /tmp/fnaf4.exe -o fnaf4.sb3 2>&1
           ls -lh fnaf4.sb3 || true
       - uses: actions/upload-artifact@v4
         with: { name: fnaf4-sb3, path: fnaf4.sb3, if-no-files-found: warn }
