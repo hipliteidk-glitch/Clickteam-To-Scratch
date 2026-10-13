@@ -1,0 +1,16 @@
+name: Convert FNAF4
+on: workflow_dispatch
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python3 cts2_cli.py fnaf4.exe -o fnaf4.sb3 --no-audio --fast-frames --progress off
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fnaf4-sb3
+          path: fnaf4.sb3
