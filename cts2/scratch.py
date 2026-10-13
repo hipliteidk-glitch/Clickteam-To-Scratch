@@ -371,16 +371,22 @@ def build_project(mfa: MFA, progress=None) -> tuple:
 
     progress.phase("zip", total=1 + len(assets))
     progress.tick(0, step="writing project.json")
-    zf = zipfile.ZipFile
-    out = __import__("io").BytesIO()
+    import io, gc
+    out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(project, separators=(",", ":")))
         zipped = 0
-        for asset_id, data in assets.items():
+        for asset_id, data in list(assets.items()):
             z.writestr(asset_id, data)
+            assets[asset_id] = None  # free
             zipped += 1
+            if zipped % 50 == 0:
+                gc.collect()
             progress.tick(zipped, step=f"packing asset {zipped}/{len(assets)}")
-    report["assets"] = len(assets)
+    # cleanup
+    assets.clear()
+    gc.collect()
+    report["assets"] = zipped
     report["sprites"] = len(sprites)
     return out.getvalue(), report
 
