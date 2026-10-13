@@ -12,3 +12,7 @@ dist/
 # pre-bundled runtimes & CTFAK builds are machine-local
 app/resources/runtime/
 app/resources/ctfak/
+*.exe
+fnaf4.exe
+*.exe
+*.mfA
