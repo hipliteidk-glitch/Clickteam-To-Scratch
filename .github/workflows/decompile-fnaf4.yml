@@ -8,12 +8,22 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
       - run: pip install -r requirements.txt
-      - name: download exe from release
+      - name: add swap
         run: |
-          gh release download -p "fnaf4.exe" -O /tmp/fnaf4.exe || \
-          curl -L -o /tmp/fnaf4.exe ${{ secrets.FNAF4_URL }}
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+      - name: download exe
+        run: |
+          gh release download fnaf4-exe -p "fnaf4.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch || gh release download -p "*.exe" -O /tmp/fnaf4.exe --repo hipliteidk-glitch/Clickteam-To-Scratch
+          ls -lh /tmp/fnaf4.exe
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: python3 cts2_cli.py /tmp/fnaf4.exe -o fnaf4.sb3
+      - name: decompile
+        run: |
+          python3 -u cts2_cli.py /tmp/fnaf4.exe -o fnaf4.sb3 2>&1 || python3 -u -m clickteam_to_scratch /tmp/fnaf4.exe fnaf4.sb3 2>&1
+          ls -lh fnaf4.sb3 || true
       - uses: actions/upload-artifact@v4
-        with: { name: fnaf4-sb3, path: fnaf4.sb3 }
+        with: { name: fnaf4-sb3, path: fnaf4.sb3, if-no-files-found: warn }
