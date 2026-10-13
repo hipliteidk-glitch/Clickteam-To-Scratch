@@ -1,0 +1,31 @@
+name: Nebula Fallback Decompile
+
+on:
+  workflow_dispatch:
+    inputs:
+      exe:
+        default: 'game.exe'
+
+jobs:
+  nebula:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Clone NebulaFD
+        run: |
+          git clone https://github.com/AITYunivers/NebulaFD
+          dotnet build NebulaFD/Nebula.CLI/Nebula.CLI.csproj -c Release
+      - name: Decompile with Nebula
+        run: |
+          $exe = "${{ inputs.exe }}"
+          if (-not (Test-Path $exe)) { $exe = (Get-ChildItem *.exe | Sort-Object Length -Descending | Select-Object -First 1).Name }
+          Write-Host "Using $exe"
+          .\NebulaFD\build\Nebula.exe $exe -o nebula_out
+          Get-ChildItem nebula_out -Recurse | Select-Object -First 100
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nebula-out
+          path: nebula_out/

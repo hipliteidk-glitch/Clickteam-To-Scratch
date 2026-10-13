@@ -1,0 +1,46 @@
+name: Decompile EXE to SB3
+
+on:
+  workflow_dispatch:
+    inputs:
+      exe:
+        description: 'path to exe inside repo'
+        default: 'game.exe'
+        required: true
+  push:
+    paths:
+      - '**.exe'
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt || true
+          pip install Pillow lz4
+      - name: Inspect + Pack Info
+        run: |
+          EXE="${{ inputs.exe }}"
+          [ -f "$EXE" ] || EXE=$(ls -S *.exe 2>/dev/null | head -n1 || echo "game.exe")
+          echo "Using $EXE size=$(stat -c%s $EXE 2>/dev/null || stat -f%z $EXE)"
+          python3 cts2_cli.py "$EXE" --pack-info || true
+          python3 cts2_cli.py --inspect "$EXE" > report.json || true
+          head -n 200 report.json
+      - name: EXE -> SB3
+        run: |
+          EXE="${{ inputs.exe }}"
+          [ -f "$EXE" ] || EXE=$(ls -S *.exe 2>/dev/null | head -n1)
+          echo "Converting $EXE"
+          python3 cts2_cli.py "$EXE" -o out.sb3 --progress auto -v
+          ls -lh out.sb3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sb3
+          path: |
+            out.sb3
+            report.json
