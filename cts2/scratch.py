@@ -256,171 +256,139 @@ def _transparent_png() -> bytes:
 
 
 def build_project(mfa: MFA, progress=None) -> tuple:
- """Return (zip_bytes, report_dict). Low-mem streaming version."""
- from.progress import NULL as _NULL
- from.transpile import transpile_frame_blocks
- import tempfile, os, hashlib
- progress = progress or _NULL
- tmpdir = tempfile.mkdtemp(prefix="cts2_assets_")
- assets_map = {} # md5ext -> filepath
- def _store_asset(md5ext, data_bytes):
- if md5ext in assets_map:
- return
- fp = os.path.join(tmpdir, md5ext.replace("/","_"))
- with open(fp, "wb") as f:
- f.write(data_bytes)
- assets_map[md5ext] = fp
- report = {"warnings": [], "assets": 0, "sprites": 0,
- "blocks": 0, "events_mapped": 0, "events_total": 0,
- "approximations": 0, "unmapped_events": 0}
- progress.phase("build", total=1 + len(mfa.frames))
- progress.step("stage")
- stage = TargetBuilder("Stage", is_stage=True)
- if mfa.frames:
- f = mfa.frames[0]
- bg = f.background
- if len(bg) < 4 or bg[3] == 0:
- bg = (bg[0], bg[1], bg[2], 255) if bg[:3]!= (0, 0, 0) else (255, 255, 255, 255)
- if f.background[:3] == (0, 0, 0) and (len(f.background) < 4 or f.background[3] == 0):
- bg = (0, 0, 0, 255)
- png = solid_png(480, 360, bg)
- data = stage.add_costume(png, "backdrop1", 240, 180)
- _store_asset(data, png)
- del png
- elif mfa.images:
- first = next(iter(mfa.images.values()))
- if first.png:
- data = stage.add_costume(first.png, "backdrop1", 240, 180)
- _store_asset(data, first.png)
- else:
- png = solid_png(480, 360, (255, 255, 255, 255))
- data = stage.add_costume(png, "backdrop1", 240, 180)
- _store_asset(data, png)
- sprites: List[TargetBuilder] = []
- for frame in mfa.frames:
- _add_frame_sprites_lowmem(mfa, frame, sprites, _store_asset, report, progress)
- for target in [stage] + sprites:
- for c in target.costumes:
- asset_id = c["md5ext"]
- if asset_id not in assets_map:
- report["warnings"].append(f"Missing asset {asset_id} for {target.name}")
- if not sprites:
- demo = TargetBuilder("GameLog")
- demo.add_variable(str(uuid.uuid4()), "converted")
- png = solid_png(128, 128, (90, 120, 200))
- data = demo.add_costume(png, "blank")
- _store_asset(data, png)
- sprites.append(demo)
- progress.phase("transpile", total=sum(len(f.event_groups) for f in mfa.frames) or 1)
- done_groups = 0
- sprite_by_handle: Dict[int, TargetBuilder] = {}
- events_sprites: List[TargetBuilder] = []
- for frame in mfa.frames:
- _collect_sprite_handles(frame, sprites, sprite_by_handle)
- events_tb = TargetBuilder(f"{frame.name}-Events")
- data = events_tb.add_costume(_transparent_png(), "runner")
- _store_asset(data, _transparent_png())
- events_sprites.append(events_tb)
- ev_notes: List[str] = []
- if frame.event_groups:
- progress.step(f"frame '{frame.name}': {len(frame.event_groups)} event groups")
- stats = transpile_frame_blocks(frame, mfa, events_tb, sprite_by_handle, report["warnings"], ev_notes)
- report["blocks"] += stats["blocks"]
- report["events_mapped"] += stats["mapped"]
- report["events_total"] += stats["groups"]
- report["approximations"] += stats["approximations"]
- report["unmapped_events"] += stats["unmapped"]
- if stats["unmapped"]:
- report["warnings"].append(f"frame '{frame.name}': {stats['unmapped']}/{stats['groups']} event groups kept as Logic-Notes")
- if stats["mapped"]:
- report["notes"] = report.get("notes", []) + [f"frame '{frame.name}': compiled {stats['mapped']} event group(s) into {stats['blocks']} Scratch blocks"]
- done_groups += len(frame.event_groups)
- progress.tick(done_groups)
- sprites.extend(events_sprites)
- notes = _event_notes_svg(mfa)
- if notes:
- log_sprite = TargetBuilder("Logic-Notes")
- data = log_sprite.add_costume_from_svg(notes, "events")
- _store_asset(data, notes)
- sprites.append(log_sprite)
- targets = [stage] + sprites
- for i, t in enumerate(targets):
- t.layerOrder = i
- project = {"targets": [t.to_json() for t in targets], "monitors": [], "extensions": [], "meta": {"semver": "3.0.0", "vm": "0.3.0", "agent": "Clickteam-to-Scratch"}}
- progress.phase("zip", total=1 + len(assets_map))
- progress.tick(0, step="writing project.json")
- import io, gc, zipfile, json, shutil
- tmp_zip = os.path.join(tempfile.gettempdir(), "out.sb3.tmp")
- with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as z:
- z.writestr("project.json", json.dumps(project, separators=(",", ":")))
- zipped = 0
- for asset_id, fp in list(assets_map.items()):
- z.write(fp, arcname=asset_id)
- zipped += 1
- try:
- os.remove(fp)
- except:
- pass
- if zipped % 100 == 0:
- gc.collect()
- progress.tick(zipped, step=f"packing asset {zipped}/{len(assets_map)}")
- try:
- shutil.rmtree(tmpdir, ignore_errors=True)
- except:
- pass
- gc.collect()
- report["assets"] = len(assets_map)
- report["sprites"] = len(sprites)
- with open(tmp_zip, "rb") as f:
- data = f.read()
- try:
- os.remove(tmp_zip)
- except:
- pass
- return data, report
+    """Return (zip_bytes, report_dict)."""
+    from .progress import NULL as _NULL
+    from .transpile import transpile_frame_blocks
 
+    progress = progress or _NULL
+    assets: Dict[str, bytes] = {}
+    report = {"warnings": [], "assets": 0, "sprites": 0,
+              "blocks": 0, "events_mapped": 0, "events_total": 0,
+              "approximations": 0, "unmapped_events": 0}
 
+    progress.phase("build", total=1 + len(mfa.frames))
+    progress.step("stage")
+    stage = TargetBuilder("Stage", is_stage=True)
+    if mfa.frames:
+        f = mfa.frames[0]
+        # Prefer the frame background colour; fall back to white if the
+        # colour is fully transparent (some EXEs leave alpha at 0).
+        bg = f.background
+        if len(bg) < 4 or bg[3] == 0:
+            bg = (bg[0], bg[1], bg[2], 255) if bg[:3] != (0, 0, 0) else (255, 255, 255, 255)
+            if f.background[:3] == (0, 0, 0) and (len(f.background) < 4 or f.background[3] == 0):
+                bg = (0, 0, 0, 255)  # intentional black
+        png = solid_png(480, 360, bg)
+        data = stage.add_costume(png, "backdrop1", 240, 180)
+        assets[data] = png
+    elif mfa.images:
+        first = next(iter(mfa.images.values()))
+        if first.png:
+            data = stage.add_costume(first.png, "backdrop1", 240, 180)
+            assets[data] = first.png
+    else:
+        png = solid_png(480, 360, (255, 255, 255, 255))
+        data = stage.add_costume(png, "backdrop1", 240, 180)
+        assets[data] = png
 
-def _add_frame_sprites_lowmem(mfa: MFA, frame: Frame, sprites: List[TargetBuilder],
- store_fn, report: dict, progress=None) -> None:
- from.progress import NULL as _NULL
- progress = progress or _NULL
- seen: dict = {}
- total = len(frame.instances) or 1
- for n, inst in enumerate(frame.instances, start=1):
- progress.tick(n, total, step=f"frame '{frame.name}': sprite {n}/{total}")
- item = _find_item(frame, inst.item_handle)
- if item is None:
- continue
- visual = _item_image(mfa, item)
- png = visual.png if visual is not None else None
- if png:
- hotspot = (visual.hotspot_x, visual.hotspot_y)
- else:
- ph = _placeholder_png(visual.width if visual else item.width, visual.height if visual else item.height, item.name)
- hotspot = (0, 0)
- report["warnings"].append(f"Object {item.name}: image missing/undecodable; used a PNG placeholder costume")
- png = None
- src_item = item.handle
- if src_item in seen:
- sb = seen[src_item]
- else:
- sb = TargetBuilder(_sprite_name(frame, item))
- if png:
- asset = sb.add_costume(png, "costume1", *hotspot)
- store_fn(asset, png)
- for idx, h in enumerate(item.frames[1:], start=2):
- img = mfa.images.get(h)
- if img and img.png:
- a = sb.add_costume(img.png, f"costume{idx}", img.hotspot_x, img.hotspot_y)
- store_fn(a, img.png)
- else:
- asset = sb.add_costume(ph, "costume1", *hotspot)
- store_fn(asset, ph)
- _add_sprite_scripts(sb, frame, inst, item, len(item.frames))
- seen[src_item] = sb
- sprites.append(sb)
- report["sprites"] += 1
+    sprites: List[TargetBuilder] = []
+    for frame in mfa.frames:
+        _add_frame_sprites(mfa, frame, sprites, assets, report, progress)
+    # make sure assets referenced are present
+    for target in [stage] + sprites:
+        for c in target.costumes:
+            asset_id = c["md5ext"]
+            if asset_id not in assets:
+                report["warnings"].append(f"Missing asset {asset_id} for {target.name}")
+
+    if not sprites:
+        # Always have at least one sprite so the project is openable.
+        demo = TargetBuilder("GameLog")
+        demo.add_variable(str(uuid.uuid4()), "converted")
+        png = solid_png(128, 128, (90, 120, 200))
+        data = demo.add_costume(png, "blank")
+        assets[data] = png
+        sprites.append(demo)
+
+    # Compile the Clickteam event lists into real Scratch blocks.
+    progress.phase("transpile", total=sum(len(f.event_groups) for f in mfa.frames) or 1)
+    done_groups = 0
+    sprite_by_handle: Dict[int, TargetBuilder] = {}
+    events_sprites: List[TargetBuilder] = []
+    for frame in mfa.frames:
+        _collect_sprite_handles(frame, sprites, sprite_by_handle)
+        events_tb = TargetBuilder(f"{frame.name}-Events")
+        data = events_tb.add_costume(_transparent_png(), "runner")
+        assets[data] = _transparent_png()
+        events_sprites.append(events_tb)
+        ev_notes: List[str] = []
+        if frame.event_groups:
+            progress.step(
+                f"frame '{frame.name}': {len(frame.event_groups)} event groups")
+            stats = transpile_frame_blocks(
+                frame, mfa, events_tb, sprite_by_handle,
+                report["warnings"], ev_notes)
+            report["blocks"] += stats["blocks"]
+            report["events_mapped"] += stats["mapped"]
+            report["events_total"] += stats["groups"]
+            report["approximations"] += stats["approximations"]
+            report["unmapped_events"] += stats["unmapped"]
+            if stats["unmapped"]:
+                report["warnings"].append(
+                    f"frame '{frame.name}': {stats['unmapped']}/{stats['groups']} "
+                    f"event groups kept as Logic-Notes (opcodes not mapped to "
+                    f"Scratch blocks)")
+            if stats["mapped"]:
+                report["notes"] = report.get("notes", []) + [
+                    f"frame '{frame.name}': compiled {stats['mapped']} event "
+                    f"group(s) into {stats['blocks']} Scratch blocks"]
+        done_groups += len(frame.event_groups)
+        progress.tick(done_groups)
+    sprites.extend(events_sprites)
+
+    notes = _event_notes_svg(mfa)
+    if notes:
+        log_sprite = TargetBuilder("Logic-Notes")
+        data = log_sprite.add_costume_from_svg(notes, "events")
+        assets[data] = notes
+        sprites.append(log_sprite)
+
+    targets = [stage] + sprites
+    # layer order
+    for i, t in enumerate(targets):
+        t.layerOrder = i
+
+    project = {
+        "targets": [t.to_json() for t in targets],
+        "monitors": [],
+        "extensions": [],
+        "meta": {
+            "semver": "3.0.0",
+            "vm": "0.3.0",
+            "agent": "Clickteam-to-Scratch",
+        },
+    }
+
+    progress.phase("zip", total=1 + len(assets))
+    progress.tick(0, step="writing project.json")
+    import io, gc
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("project.json", json.dumps(project, separators=(",", ":")))
+        zipped = 0
+        for asset_id, data in list(assets.items()):
+            z.writestr(asset_id, data)
+            assets[asset_id] = None  # free
+            zipped += 1
+            if zipped % 50 == 0:
+                gc.collect()
+            progress.tick(zipped, step=f"packing asset {zipped}/{len(assets)}")
+    # cleanup
+    assets.clear()
+    gc.collect()
+    report["assets"] = zipped
+    report["sprites"] = len(sprites)
+    return out.getvalue(), report
 
 
 def _placeholder_png(width: int, height: int, name: str) -> bytes:

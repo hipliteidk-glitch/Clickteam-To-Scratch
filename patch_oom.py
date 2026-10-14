@@ -1,26 +1,9 @@
-import pathlib
+import pathlib, re
 p = pathlib.Path('cts2/scratch.py')
 t = p.read_text()
-# Replace assets dict to use streaming
-old = '''    progress.phase("zip", total=1 + len(assets))
-    progress.tick(0, step="writing project.json")
-    zf = zipfile.ZipFile
-    out = __import__("io").BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("project.json", json.dumps(project, separators=(",", ":")))
-        zipped = 0
-        for asset_id, data in assets.items():
-            z.writestr(asset_id, data)
-            zipped += 1
-            progress.tick(zipped, step=f"packing asset {zipped}/{len(assets)}")
-    report["assets"] = len(assets)
-    report["sprites"] = len(sprites)
-    return out.getvalue(), report'''
-new = '''    progress.phase("zip", total=1 + len(assets))
-    progress.tick(0, step="writing project.json")
-    import io, gc
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+# --- ensure zip streams and frees ---
+# Replace BytesIO zip with direct file write if build_project is changed to use tempfile, but keep simple free logic
+old = '''    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(project, separators=(",", ":")))
         zipped = 0
         for asset_id, data in list(assets.items()):
@@ -33,17 +16,26 @@ new = '''    progress.phase("zip", total=1 + len(assets))
     # cleanup
     assets.clear()
     gc.collect()
-    report["assets"] = zipped
-    report["sprites"] = len(sprites)
-    return out.getvalue(), report'''
-if old in t:
-    t = t.replace(old, new)
-    print("patched zip")
+    report["assets"] = zipped'''
+
+# Ensure we have gc collect version (already applied, ensure list())
+if 'assets[asset_id] = None' not in t:
+    t = t.replace('for asset_id, data in assets.items():', 'for asset_id, data in list(assets.items()):\n            assets[asset_id] = None  # free patched')
+    print("patched assets loop")
 else:
-    print("old block not found, trying fuzzy")
-    # try direct edit
-    t = t.replace('for asset_id, data in assets.items():', 'for asset_id, data in list(assets.items()):\n            assets[asset_id] = None')
-    
-# Also patch gamedata to drop raw after decode
+    print("zip already patched")
+
 p.write_text(t)
-print("written")
+
+# Patch gamedata to not keep raw body
+p2 = pathlib.Path('cts2/gamedata.py')
+t2 = p2.read_text()
+if 'raw_body = None' not in t2:
+    # after decoding image, free raw
+    t2 = t2.replace('img.png = encode_png', 'try:\n                    # free raw to save RAM\n                    img.raw_body = None\n                except: pass\n                img.png = encode_png')
+    print("patched gamedata free")
+    p2.write_text(t2)
+else:
+    print("gamedata already")
+
+print("done")
