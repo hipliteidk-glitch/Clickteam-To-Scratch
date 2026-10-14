@@ -1,5 +1,10 @@
 name: Convert FNAF4
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/convert.yml
+      - cts2/**
 jobs:
   convert:
     runs-on: ubuntu-latest
@@ -29,29 +34,12 @@ jobs:
           pip install -r requirements.txt
           pip install Pillow lz4 psutil
       - name: apply OOM patches
-        run: |
-          python3 patch_oom.py || true
-          # extra gamedata memory patch
-          python3 - <<'PY'
-import pathlib
-p=pathlib.Path('cts2/gamedata.py')
-t=p.read_text()
-# ensure raw_body freed in fast mode
-if 'fast_frames: dropping raw_body' not in t:
-    t=t.replace('if getattr(self, \'fast_frames\', False):', 'if getattr(self, \'fast_frames\', False):\n                    # fast_frames: dropping raw_body to save RAM\n                    try:\n                        # if we just decoded an image, free its raw buffer\n                        pass\n                    except: pass\n                if False: # placeholder')
-    print("patched placeholder")
-# Patch scratch to free after add
-p.write_text(t)
-PY
+        run: python3 patch_oom.py
       - name: convert low-mem
         env:
-          CTS2_FAST_FRAMES: "1"
-          CTS2_SKIP_AUDIO: "1"
           PYTHONUNBUFFERED: "1"
-          PYTHONMALLOC: "malloc"
         run: |
           EXE="./fnaf4.exe"
-          if [ ! -f "$EXE" ]; then EXE=$(ls -S *.exe | head -n1); fi
           ls -lh "$EXE"
           python3 -u cts2_cli.py "$EXE" -o fnaf4.sb3 --no-audio --fast-frames --progress json 2>&1 | tee log.txt
           ls -lh fnaf4.sb3 || true
