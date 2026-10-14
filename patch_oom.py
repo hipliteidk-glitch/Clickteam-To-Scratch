@@ -1,41 +1,33 @@
-import pathlib, re
+import pathlib
 p = pathlib.Path('cts2/scratch.py')
 t = p.read_text()
-# --- ensure zip streams and frees ---
-# Replace BytesIO zip with direct file write if build_project is changed to use tempfile, but keep simple free logic
-old = '''    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("project.json", json.dumps(project, separators=(",", ":")))
-        zipped = 0
-        for asset_id, data in list(assets.items()):
-            z.writestr(asset_id, data)
-            assets[asset_id] = None  # free
-            zipped += 1
-            if zipped % 50 == 0:
-                gc.collect()
-            progress.tick(zipped, step=f"packing asset {zipped}/{len(assets)}")
-    # cleanup
-    assets.clear()
-    gc.collect()
-    report["assets"] = zipped'''
-
-# Ensure we have gc collect version (already applied, ensure list())
 if 'assets[asset_id] = None' not in t:
     t = t.replace('for asset_id, data in assets.items():', 'for asset_id, data in list(assets.items()):\n            assets[asset_id] = None  # free patched')
-    print("patched assets loop")
-else:
-    print("zip already patched")
+    p.write_text(t)
 
-p.write_text(t)
-
-# Patch gamedata to not keep raw body
 p2 = pathlib.Path('cts2/gamedata.py')
 t2 = p2.read_text()
+# patch 1: free raw
 if 'raw_body = None' not in t2:
-    # after decoding image, free raw
-    t2 = t2.replace('img.png = encode_png', 'try:\n                    # free raw to save RAM\n                    img.raw_body = None\n                except: pass\n                img.png = encode_png')
-    print("patched gamedata free")
-    p2.write_text(t2)
-else:
-    print("gamedata already")
+    t2 = t2.replace('img.png = encode_png', 'try:\n                    img.raw_body = None\n                except: pass\n                img.png = encode_png')
+# patch 2: skip events entirely when fast_frames - this is the 25min hang fix
+if 'SKIP_EVENTS_FAST' not in t2 or 'skipped_events' not in t2:
+    # replace the loop start
+    old_loop = '            for chunk in self._decoded_chunks(r):'
+    if old_loop in t2:
+        t2 = t2.replace(old_loop, '''            skipped_events = 0  # SKIP_EVENTS_FAST
+            for chunk in self._decoded_chunks(r):
+                if getattr(self, 'fast_frames', False) and chunk.id == FRAME_EVENTS:
+                    skipped_events += 1
+                    continue''')
+    # also make _decoded_chunks skip decompressing events when fast
+    # add early check in _read_frame header loop - events chunk size can be huge, skip decoding by not entering _decoded_chunks? We already skip after decode, but to save decrypt, make _decoded_chunks yield raw for events when fast
+    # Patch _decoded_chunks method to early-return empty for events when fast
+    if 'if getattr(self, \'fast_frames\'' not in t2:
+        t2 = t2.replace(
+            '    def _decoded_chunks(self, r: Reader) -> List[_Chunk]:',
+            '    def _decoded_chunks(self, r: Reader) -> List[_Chunk]:\n        # fast_frames optimization - will be filtered later'
+        )
 
-print("done")
+p2.write_text(t2)
+print("repo patch_oom.py updated")
