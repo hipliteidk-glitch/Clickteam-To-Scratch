@@ -37,15 +37,18 @@ jobs:
           ls -lh fnaf4.exe
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: apply OOM patches
+      - name: verify low-memory fixes are present
         run: python3 patch_oom.py
       - name: convert low-mem
         env:
           PYTHONUNBUFFERED: "1"
           PYTHONMALLOC: "malloc"
+          CTS2_FAST_FRAMES: "1"
+          CTS2_SKIP_AUDIO: "1"
         run: |
+          set -o pipefail
           python3 -u cts2_cli.py fnaf4.exe -o fnaf4.sb3 --no-audio --fast-frames --progress json 2>&1 | tee log.txt
-          ls -lh fnaf4.sb3 || true
+          ls -lh fnaf4.sb3
           tail -n 800 log.txt
       - uses: actions/upload-artifact@v4
         if: always()

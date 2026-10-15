@@ -522,6 +522,33 @@ class TestGameData(unittest.TestCase):
         # without crashing the conversion.
         self.assertEqual(len(mfa.frames[0].event_groups), 0)
 
+    def test_fast_frames_reach_reader_via_convert_file(self):
+        # Regression (run 38525958140, 90-min timeout): load_project()
+        # dropped fast_frames/skip_audio for direct file inputs, so the
+        # FNaF4 workflow's --fast-frames --no-audio flags were ignored.
+        events = b"COMPILED_EVENTS" * 64
+        frame = frame_chunk(instances=(frame_instance(),), events=events)
+        game = build_game_data(
+            images=[image_item_normal(0, 2, 2, _png_pixels_2x2())],
+            objects_25=[object_common_25()],
+            object_names=("Player",),
+            frames=[frame],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            exe_path = os.path.join(tmp, "game.exe")
+            with open(exe_path, "wb") as fh:
+                fh.write(build_exe(game))
+            result = convert_file(exe_path, os.path.join(tmp, "out.sb3"),
+                                  fast_frames=True, skip_audio=True)
+        mfa = result["mfa"]
+        self.assertEqual(mfa.frames[0].event_groups, [])
+        # Event-program size is still reported despite the skipped decode.
+        self.assertTrue(any(f"{len(events)} bytes total" in n
+                            for n in result["report"].get("notes", [])))
+        # Large-input memory guards: no duplicate raw pixels / EXE copy.
+        self.assertEqual(mfa.images[0].raw, b"")
+        self.assertEqual(mfa.file_data, b"")
+
 
 class TestChunkProgress(unittest.TestCase):
     """Image-bank sub-phases must not corrupt subsequent chunk progress."""

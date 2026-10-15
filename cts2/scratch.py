@@ -417,12 +417,18 @@ def _placeholder_png(width: int, height: int, name: str) -> bytes:
     return encode_png(w, h, pixels)
 
 
+def _item_lookup(frame: Frame) -> Dict[int, ObjectData]:
+    """handle -> item map for a frame (built once, not per instance)."""
+    return {item.handle: item for item in frame.items}
+
+
 def _collect_sprite_handles(frame: Frame, sprites: List[TargetBuilder],
                             sprite_by_handle: Dict[int, TargetBuilder]) -> None:
     """Map each frame item's handle to the sprite that represents it."""
     seen: dict = {}
+    lookup = _item_lookup(frame)
     for inst in frame.instances:
-        item = _find_item(frame, inst.item_handle)
+        item = lookup.get(inst.item_handle)
         if item is None:
             continue
         if item.handle in seen:
@@ -441,10 +447,11 @@ def _add_frame_sprites(mfa: MFA, frame: Frame, sprites: List[TargetBuilder],
     from .progress import NULL as _NULL
     progress = progress or _NULL
     seen: dict = {}
+    lookup = _item_lookup(frame)
     total = len(frame.instances) or 1
     for n, inst in enumerate(frame.instances, start=1):
         progress.tick(n, total, step=f"frame '{frame.name}': sprite {n}/{total}")
-        item = _find_item(frame, inst.item_handle)
+        item = lookup.get(inst.item_handle)
         if item is None:
             continue
         visual = _item_image(mfa, item)
