@@ -241,7 +241,12 @@ def load_project(path: str, ctfak: Optional[str] = None, progress=None, fast_fra
     progress.step(f"reading {os.path.basename(path)}")
     with open(path, "rb") as fh:
         data = fh.read()
-    return load_from_bytes(data, path, ctfak, progress)
+    # Forward fast_frames/skip_audio: dropping them here (as before) meant
+    # `cts2_cli.py game.exe --fast-frames --no-audio` silently did a full,
+    # slow, high-memory event decode for direct .exe inputs -- the exact
+    # FNaF4 workflow path -- and timed out in CI.
+    return load_from_bytes(data, path, ctfak, progress,
+                           fast_frames=fast_frames, skip_audio=skip_audio)
 
 
 # Back-compat alias (the old name is used by older call sites).
@@ -302,10 +307,11 @@ def convert_file(input_path: str, output_path: Optional[str] = None,
 
 def convert_bytes(data: bytes, input_name: str = "project.mfa",
                   ctfak: Optional[str] = None,
-                  progress=None) -> dict:
+                  progress=None, fast_frames=False, skip_audio=False) -> dict:
     from .progress import NULL as _NULL
     progress = progress or _NULL
-    mfa, notes = load_from_bytes(data, input_name, ctfak, progress)
+    mfa, notes = load_from_bytes(data, input_name, ctfak, progress,
+                                 fast_frames=fast_frames, skip_audio=skip_audio)
     sb3, report = build_project(mfa, progress)
     if notes:
         report.setdefault("notes", []).extend(notes)

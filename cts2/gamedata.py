@@ -932,6 +932,14 @@ class _GameReader:
                 break
             if size < 0 or size > r.remaining():
                 break
+            if getattr(self, "fast_frames", False) and cid == FRAME_EVENTS:
+                # Low-memory mode: don't copy, decrypt or decompress the
+                # (potentially multi-MB) compiled event program at all.
+                # _read_frame skips it anyway when fast_frames is set;
+                # decoding it here first was pure wasted time/RAM.
+                r.skip(size)
+                out.append(_Chunk(cid, 0, size, b""))
+                continue
             raw = r.read(size)
             chunk = _Chunk(cid, flags, size, raw)
             if flags == 0:
@@ -1268,9 +1276,11 @@ class _GameReader:
                                  transparent)
         except Exception:  # noqa: BLE001
             png = None
+        # Keep raw pixels only on decode failure (nothing reads .raw after
+        # this); retaining body+png doubles image-bank memory.
         self.images[handle] = ImageItem(
             handle, checksum, references, size, width, height, gmode, flags,
-            hx, hy, ax, ay, transparent, png, body)
+            hx, hy, ax, ay, transparent, png, b"" if png is not None else body)
 
     def _read_image_normal(self, r: Reader) -> None:
         """F2.5 EXE image: outer zlib block around the classic item header."""
@@ -1358,7 +1368,7 @@ class _GameReader:
             raise GameDataError(f"image {handle} pixels: {exc}") from exc
         self.images[handle] = ImageItem(
             handle, checksum, references, decomp_size, width, height, gmode,
-            flags, hx, hy, ax, ay, transparent, png, raw)
+            flags, hx, hy, ax, ay, transparent, png, b"")
 
     def _read_sound_bank(self, data: bytes) -> None:
         if self.progress is not None:
@@ -1524,7 +1534,9 @@ class _GameReader:
                         name = _cstring(lr, self.unicode)
                         frame.layers.append(Layer(name, flags, xc, yc))
                 elif chunk.id == FRAME_EVENTS:
-                    self.event_sizes.append(len(chunk.raw))
+                    # chunk.size survives the fast-frames placeholder
+                    # (whose raw is intentionally empty).
+                    self.event_sizes.append(chunk.size)
                     if getattr(self, 'fast_frames', False):
                         continue
                     # Decode the compiled EXE event program into the same
@@ -1611,12 +1623,14 @@ class _GameReader:
             if (chunk.id == CHUNK_SOUND_BANK and (not audio.EXTRACTION_ENABLED or getattr(self, 'skip_audio', False))):
                 # Do not even decrypt/decompress the audio chunk.  Its raw
                 # bytes have no bearing on frames, images, or event blocks.
+                chunk.raw = b""
                 continue
             if chunk.id not in _USED_CHUNK_IDS:
                 # Nothing in the SB3 export reads this payload, so the
                 # cipher is never run over it.
                 unused_chunks += 1
                 unused_bytes += chunk.size
+                chunk.raw = b""
                 continue
             # Large RC4-encrypted chunks take a while in pure Python; report
             # the byte count so the display keeps moving.
@@ -1673,6 +1687,9 @@ class _GameReader:
             # exe-only flag (8768), shaders (8771), extended header (8773),
             # 2.5+ object shaders (8789), TTF fonts (8793): not needed for
             # the SB3 export.
+            # Decoded payload lives in `data`; drop the original so peak
+            # RAM isn't raw+decoded for every large bank chunk.
+            chunk.raw = b""
 
         # The 2.5+ object header/names/properties come as three separate
         # chunks; assemble them once all are known.
@@ -1699,6 +1716,7 @@ class _GameReader:
                     else None
                 ))
             if data is None:
+                chunk.raw = b""
                 continue
             if self.progress is not None:
                 self.progress.step(f"parsing frame {idx}/{len(frame_chunks)}")
@@ -1708,6 +1726,8 @@ class _GameReader:
                 else len(self.frames)
             )
             self._read_frame(data, handle)
+            chunk.raw = b""
+            data = None
             if self.progress is not None:
                 self.progress.tick(idx)
 
@@ -1888,7 +1908,9 @@ def load_game_data_from_exe(source, progress=None, fast_frames=False, skip_audio
         global_values=reader.global_values,
         global_strings=reader.global_strings,
         frames=reader.frames,
-        file_data=data,
+        # Nothing reads MFA.file_data, and for a ~466 MB game EXE keeping
+        # it pins a second full copy of the input for the whole SB3 build.
+        file_data=b"",
     )
 
     notes: List[str] = []

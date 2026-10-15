@@ -1,35 +1,65 @@
+"""Legacy CI entry point -- now a verification, not a source patch.
+
+Historically the FNaF4 workflow ran this script to monkey-patch the
+converter at CI time with fragile exact-string replacements. Those
+replacements silently stopped matching the code (e.g. it searched
+cts2/gamedata.py for ``img.png = encode_png``, which does not exist
+there), so CI believed it had applied low-memory fixes while running
+completely unpatched code -- a direct contributor to the 90-minute
+timeout in run 38525958140.
+
+The low-memory behaviour is now real, tested code:
+
+* ``cts2.converter.load_project`` forwards ``fast_frames``/``skip_audio``
+  for direct file inputs (it used to drop them);
+* ``cts2.gamedata`` does not copy/decrypt/decompress frame event
+  programs in fast-frames mode, frees chunk payloads after decoding,
+  does not retain raw image pixels alongside decoded PNGs, and does
+  not pin the whole input EXE as ``MFA.file_data``.
+
+This script therefore only *verifies* those invariants and fails the
+workflow early (in seconds, not after a 90-minute timeout) if they
+ever regress. It never modifies source files.
+"""
+from __future__ import annotations
+
 import pathlib
-print("applying aggressive OOM patch v4 - fixed indent")
-p = pathlib.Path('cts2/scratch.py')
-t = p.read_text()
-if 'assets[asset_id] = None  # free patched' not in t:
-    t = t.replace('for asset_id, data in assets.items():', 'for asset_id, data in list(assets.items()):\n            assets[asset_id] = None  # free patched')
-    p.write_text(t)
+import sys
 
-p2 = pathlib.Path('cts2/gamedata.py')
-t2 = p2.read_text()
-# 1 free raw_body
-if 'img.raw_body = None' not in t2:
-    t2 = t2.replace('img.png = encode_png', 'try:\n                    img.raw_body = None\n                except: pass\n                img.png = encode_png')
-# 2 skip events before decrypt
-orig = '            raw = r.read(size)\n            chunk = _Chunk(cid, flags, size, raw)'
-if orig in t2:
-    t2 = t2.replace(orig, '            raw = r.read(size)\n            if getattr(self, "fast_frames", False) and cid == 13117:\n                del raw\n                continue\n            chunk = _Chunk(cid, flags, size, raw)\n            del raw')
-# 3 fast skip set
-if 'FAST_FRAMES_SKIP_SET' not in t2:
-    t2 = t2.replace(
-        '        try:\n            for chunk in self._decoded_chunks(r):',
-        '        try:\n            FAST_FRAMES_SKIP_SET = {13117, 13111, 13113, 13114, 13115, 13116, 13122, 13124, 13125}\n            for chunk in self._decoded_chunks(r):\n                if getattr(self, "fast_frames", False) and chunk.id in FAST_FRAMES_SKIP_SET:\n                    try:\n                        chunk.raw = b""\n                    except:\n                        pass\n                    continue'
-    )
-# 4 gc per frame - correct indent (8 spaces)
-if 'gc.collect() # patch frame' not in t2:
-    t2 = t2.replace('        frame.items = list(self.objects.values())\n        self.frames.append(frame)', '        frame.items = list(self.objects.values())\n        self.frames.append(frame)\n        try:\n            import gc; gc.collect() # patch frame\n        except:\n            pass')
-# 5 gc every 100
-if 'gc every 100' not in t2:
-    t2 = t2.replace('                img.png = encode_png', '                if (len(getattr(self, "images", [])) % 100) == 0:\n                    try:\n                        import gc; gc.collect() # gc every 100\n                    except: pass\n                img.png = encode_png')
+ROOT = pathlib.Path(__file__).resolve().parent
 
-p2.write_text(t2)
-# verify compiles
-import py_compile
-py_compile.compile(str(p2), doraise=True)
-print("patched gamedata.py v4 ok - compiles")
+CHECKS = [
+    ("cts2/converter.py", "fast_frames=fast_frames, skip_audio=skip_audio",
+     "load_project forwards fast_frames/skip_audio"),
+    ("cts2/gamedata.py", 'cid == FRAME_EVENTS',
+     "fast-frames skips event-program decoding"),
+    ("cts2/gamedata.py", 'file_data=b""',
+     "EXE bytes are not retained as MFA.file_data"),
+    ("cts2/gamedata.py", 'chunk.raw = b""',
+     "chunk payloads are freed after decoding"),
+]
+
+
+def main() -> int:
+    failures = []
+    for rel, needle, label in CHECKS:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        if needle not in text:
+            failures.append(f"{rel}: missing {label!r} (expected {needle!r})")
+    # The old patch must not come back.
+    for rel in ("cts2/gamedata.py", "cts2/scratch.py"):
+        if "free patched" in (ROOT / rel).read_text(encoding="utf-8"):
+            failures.append(f"{rel}: contains stale patch_oom mutation")
+    if failures:
+        print("low-memory verification FAILED:")
+        for failure in failures:
+            print(f"  - {failure}")
+        return 1
+    print("low-memory fixes are built into cts2 (no patching needed):")
+    for _rel, _needle, label in CHECKS:
+        print(f"  ok: {label}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
